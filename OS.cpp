@@ -5,10 +5,11 @@
 #include <sstream>
 #include <queue>
 #include <algorithm>
+#include <iomanip>
 
 using namespace std;
 
-// 가독성을 위한 등급 열거형 (enum)
+// 가독성을 위한 등급 열거형
 enum Grade {
     FIRST = 1,
     BUSINESS = 2,
@@ -17,106 +18,67 @@ enum Grade {
 
 // 1. 프로세스 데이터 구조체
 struct Process {
-    int id;             // 프로세스 ID
-    Grade grade;        // 등급 (1: First, 2: Business, 3: Economy)
-    int arrival_time;   // 도착 시간
-    int service_time;   // 서비스 시간
+    int id;
+    Grade grade;
+    int arrival_time;
+    int service_time;
     
-    // 시뮬레이션 과정에서 기록할 통계용 변수들
-    int start_time = -1;      // 서비스 시작 시간
-    int completion_time = 0;  // 서비스 완료 시간
-    int waiting_time = 0;     // 최종 대기 시간
-    int turnaround_time = 0;  // 최종 반환 시간 (TT)
+    int start_time = -1;
+    int completion_time = 0;
+    int waiting_time = 0;
+    int turnaround_time = 0;
     
-    bool is_promoted = false; // Economy -> Business 승격 여부
-    bool is_enqueued = false; // 큐에 들어갔는지 여부 (중복 방지용)
+    bool is_promoted = false;
+    bool is_enqueued = false;
     
-    // [핵심] HRRN 계산용 응답률(Response Ratio) 반환 함수
-    // 공식: (대기시간 + 서비스시간) / 서비스시간
-    // 주의: Promotion 되더라도 arrival_time을 그대로 쓰기 때문에 우리가 정한 '방법 A'가 자동 적용됨.
+    // HRRN 계산
     double getResponseRatio(int current_time) const {
         int current_wait = current_time - arrival_time;
         return static_cast<double>(current_wait + service_time) / service_time;
     }
 };
 
-// 2. input.txt 파일을 읽어서 Process 벡터로 반환하는 함수
-// 입력 형식: ID 도착시간 등급 서비스시간
+// 2. 파일 파싱 함수
 vector<Process> parseInputFile(const string& filename) {
     vector<Process> processes;
     ifstream file(filename);
     string line;
-
     if (!file.is_open()) {
         cerr << "에러: " << filename << " 파일을 열 수 없습니다!" << endl;
         return processes;
     }
-
-    // 예시 데이터 포맷: 1 0 3 7
-    // 의미: ID=1, arrival_time=0, grade=3, service_time=7
     while (getline(file, line)) {
         if (line.empty()) continue;
-        
         stringstream ss(line);
         Process p;
         int grade_int;
-        
-        // 띄어쓰기 또는 탭 기준으로 파싱
-        if (!(ss >> p.id >> p.arrival_time >> grade_int >> p.service_time)) {
-            cerr << "경고: 잘못된 입력 행을 건너뜀 -> " << line << endl;
-            continue;
-        }
+        if (!(ss >> p.id >> p.arrival_time >> grade_int >> p.service_time)) continue;
         p.grade = static_cast<Grade>(grade_int);
-        
         processes.push_back(p);
     }
-
     file.close();
     return processes;
 }
 
-// 3. 읽은 데이터를 확인하는 출력 함수
-void printProcesses(const vector<Process>& processes) {
-    cout << "ID\tArrival\tGrade\tService\n";
-    for (const auto& p : processes) {
-        cout << p.id << '\t' << p.arrival_time << '\t' << static_cast<int>(p.grade)
-             << '\t' << p.service_time << '\n';
+// Baseline 연속 실행을 위한 데이터 리셋 함수
+void resetProcesses(vector<Process>& processes) {
+    for (auto& p : processes) {
+        p.start_time = -1;
+        p.completion_time = 0;
+        p.waiting_time = 0;
+        p.turnaround_time = 0;
+        p.is_promoted = false;
+        p.is_enqueued = false;
     }
 }
 
-// 3-2. 시뮬레이션 결과 출력 함수
-void printResults(const vector<Process>& processes) {
-    cout << "\n=== 시뮬레이션 결과 ===\n";
-    cout << "ID\tStart\tComplete\tWaiting\tTurnaround\tPromoted\n";
-    
-    int total_waiting = 0;
-    int total_turnaround = 0;
-    int promoted_count = 0;
-    
-    for (const auto& p : processes) {
-        cout << p.id << '\t' << p.start_time << '\t' << p.completion_time 
-             << '\t' << p.waiting_time << '\t' << p.turnaround_time 
-             << '\t' << (p.is_promoted ? "Yes" : "No") << '\n';
-        
-        total_waiting += p.waiting_time;
-        total_turnaround += p.turnaround_time;
-        if (p.is_promoted) promoted_count++;
-    }
-    
-    cout << "\n=== 통계 ===\n";
-    cout << "평균 대기 시간: " << (double)total_waiting / processes.size() << endl;
-    cout << "평균 반환 시간: " << (double)total_turnaround / processes.size() << endl;
-    cout << "승격된 프로세스: " << promoted_count << endl;
-}
-
-// 4. 카운터(CPU) 구조체
+// 3. 카운터 구조체
 struct Counter {
-    int id;                 // 카운터 번호 (1~5)
-    bool is_busy = false;   // 현재 처리 중인지 여부
-    int remaining_time = 0; // 현재 승객의 남은 서비스 시간
-    Process* current_process = nullptr; // 현재 처리 중인 승객 (포인터)
+    int id;
+    bool is_busy = false;
+    int remaining_time = 0;
+    Process* current_process = nullptr;
     
-    // 카운터가 비었을 때 초기화하는 함수
     void clear() {
         is_busy = false;
         remaining_time = 0;
@@ -124,133 +86,55 @@ struct Counter {
     }
 };
 
-// 5. 스케줄러 클래스 (핵심 엔진)
-class Scheduler {
-private:
-    int current_time = 0; // 시뮬레이션 전역 시간
-    
-    // 각 등급별 대기열 (Queue)
-    // Q1은 도착 순서(FCFS)이므로 일반 queue 사용
-    queue<Process*> Q1_First; 
-    // Q2, Q3는 HRRN, SPN을 위해 정렬이 필요하므로 vector 사용
-    vector<Process*> Q2_Business; 
-    vector<Process*> Q3_Economy;  
-    
-    // 5개의 카운터 배열 (C1~C5)
-    Counter counters[5]; 
-    
-    // 전체 프로세스 목록 (포인터 배열로 관리하여 원본 데이터 수정)
-    vector<Process*> all_processes;
-    int completed_processes = 0;
-
+// =====================================================================
+// 4. [Strategy Pattern] 스케줄러 인터페이스 (추상 클래스)
+// =====================================================================
+class ISchedulerStrategy {
 public:
-    Scheduler(vector<Process>& processes) {
-        // 카운터 ID 초기화 (1번부터 5번까지)
-        for (int i = 0; i < 5; ++i) {
-            counters[i].id = i + 1;
-        }
-        
-        // 원본 프로세스의 주소를 저장
-        for (auto& p : processes) {
-            all_processes.push_back(&p);
-        }
-    }
+    virtual ~ISchedulerStrategy() = default;
+    virtual void assignCounters(Counter counters[], int current_time, 
+                                queue<Process*>& q1, vector<Process*>& q2, vector<Process*>& q3) = 0;
+    virtual string getStrategyName() = 0;
+    // Promotion 사용 여부 (기본 false)
+    virtual bool usePromotion() { return false; }
+};
 
-    // [핵심] 시뮬레이션 메인 루프
-    void run() {
-        cout << "\n=== 시뮬레이션 시작 ===" << flush << endl;
-        
-        // 모든 프로세스가 처리될 때까지 시간 흐름
-        int max_iterations = 2000; // 무한 루프 방지
-        int iterations = 0;
-        while (completed_processes < (int)all_processes.size() && iterations < max_iterations) {
-            
-            // 1. 현재 시간에 도착한 프로세스들을 각 큐에 삽입
-            enqueueArrivedProcesses();
-            
-            // 2. [Promotion] Q3(Economy)에서 20 unit 이상 대기한 승객을 Q2로 승격
-            checkPromotion();
-            
-            // 3. 빈 카운터에 규칙에 맞게 승객 배정 (비선점)
-            assignCounters();
-            
-            // 4. 카운터에서 처리 중인 프로세스 시간 감소 및 완료 확인
-            processCounters();
-            
-            // 디버그 출력 (매 50 단위 시간마다)
-            if (current_time % 50 == 0) {
-                cout << "Time: " << current_time << " | Completed: " << completed_processes 
-                     << "/" << all_processes.size() << flush << endl;
-            }
-            
-            // 시간 1 증가
-            current_time++;
-            iterations++;
-        }
-        
-        cout << "\n최종: Time=" << current_time << " | Completed=" << completed_processes << "/" << all_processes.size() << flush << endl;
-        
-        if (iterations >= max_iterations) {
-            cout << "경고: 최대 반복 횟수 도달. 무한 루프 감지됨.\n";
-        }
-        
-        cout << "=== 시뮬레이션 종료 ===" << flush << endl;
-    }
+// =====================================================================
+// 5. 우리의 제안 알고리즘 전략 (Proposed Strategy)
+// =====================================================================
+class ProposedStrategy : public ISchedulerStrategy {
+public:
+    string getStrategyName() override { return "Hybrid MLFQ (Proposed)"; }
+    // ProposedStrategy는 Promotion 사용
+    bool usePromotion() override { return true; }
 
-private:
-    void enqueueArrivedProcesses() {
-        for (Process* p : all_processes) {
-            // 정확히 도착 시간에 한 번만 큐에 추가
-            if (p->arrival_time == current_time && !p->is_enqueued) {
-                p->is_enqueued = true; // 플래그 설정
-                if (p->grade == FIRST) Q1_First.push(p);
-                else if (p->grade == BUSINESS) Q2_Business.push_back(p);
-                else if (p->grade == ECONOMY) Q3_Economy.push_back(p);
-            }
-        }
-    }
-
-    void checkPromotion() {
-        // Economy 큐(Q3)를 순회하며 20 unit 이상 대기한 프로세스를 Business 큐(Q2)로 승격
-        for (auto it = Q3_Economy.begin(); it != Q3_Economy.end(); ) {
-            int waiting_time = current_time - (*it)->arrival_time;
-            if (waiting_time >= 20 && !(*it)->is_promoted) {
-                (*it)->is_promoted = true;
-                Q2_Business.push_back(*it);
-                it = Q3_Economy.erase(it); // erase는 다음 원소를 반환
-            } else {
-                ++it;
-            }
-        }
-    }
-
-  void assignCounters() {
+    void assignCounters(Counter counters[], int current_time, 
+                        queue<Process*>& q1, vector<Process*>& q2, vector<Process*>& q3) override {
+        
         for (int i = 0; i < 5; ++i) {
             if (!counters[i].is_busy) {
                 Process* selected = nullptr;
-                int cid = counters[i].id; // 1~5번 카운터
+                int cid = counters[i].id; // 1~5번
 
-                // 설계서 1.3(c) 로직 정확히 구현 (코파일럿이 망친 부분 복구)
+                // [완벽 복구] C1, C2, C3는 전용 / C4, C5는 공용
                 if (cid == 1) { 
-                    selected = takeFromQ1(); // C1은 First 전용 (비었으면 Idle)
+                    selected = takeFromQ1(q1); 
                 } 
                 else if (cid == 2) { 
-                    selected = takeFromQ2_HRRN();
-                    if (selected == nullptr) selected = takeFromQ3_SPN(); // C2는 Economy 지원 허용
+                    selected = takeFromQ2_HRRN(q2, current_time); // Business 전용 (없으면 Idle)
                 } 
                 else if (cid == 3) { 
-                    selected = takeFromQ3_SPN(); // C3는 Economy 전용 (비었으면 Idle)
+                    selected = takeFromQ3_SPN(q3); 
                 } 
                 else if (cid == 4) { 
-                    selected = takeFromQ3_SPN();
-                    if (selected == nullptr) selected = takeFromQ2_HRRN(); // C4는 E -> B
+                    selected = takeFromQ3_SPN(q3);
+                    if (!selected) selected = takeFromQ2_HRRN(q2, current_time); 
                 } 
                 else if (cid == 5) { 
-                    selected = takeFromQ2_HRRN();
-                    if (selected == nullptr) selected = takeFromQ3_SPN(); // C5는 B -> E
+                    selected = takeFromQ2_HRRN(q2, current_time);
+                    if (!selected) selected = takeFromQ3_SPN(q3); 
                 }
 
-                // 선택된 프로세스가 있으면 카운터에 배정하고 서비스 시작
                 if (selected != nullptr) {
                     counters[i].is_busy = true;
                     counters[i].current_process = selected;
@@ -261,41 +145,256 @@ private:
         }
     }
 
-    Process* takeFromQ1() {
-        if (Q1_First.empty()) return nullptr;
-        Process* p = Q1_First.front();
-        Q1_First.pop();
+private:
+    Process* takeFromQ1(queue<Process*>& q) {
+        if (q.empty()) return nullptr;
+        Process* p = q.front(); q.pop();
         return p;
     }
 
-    Process* takeFromQ2_HRRN() {
-        if (Q2_Business.empty()) return nullptr;
-        auto best_it = max_element(Q2_Business.begin(), Q2_Business.end(),
-            [this](Process* a, Process* b) {
+    Process* takeFromQ2_HRRN(vector<Process*>& q, int current_time) {
+        if (q.empty()) return nullptr;
+        auto best = max_element(q.begin(), q.end(),
+            [current_time](Process* a, Process* b) {
                 return a->getResponseRatio(current_time) < b->getResponseRatio(current_time);
             });
-        Process* p = *best_it;
-        Q2_Business.erase(best_it);
+        Process* p = *best; q.erase(best);
         return p;
     }
 
-    Process* takeFromQ3_SPN() {
-        if (Q3_Economy.empty()) return nullptr;
-        auto best_it = min_element(Q3_Economy.begin(), Q3_Economy.end(),
+    Process* takeFromQ3_SPN(vector<Process*>& q) {
+        if (q.empty()) return nullptr;
+        auto best = min_element(q.begin(), q.end(),
             [](Process* a, Process* b) {
                 if (a->service_time == b->service_time) return a->arrival_time < b->arrival_time;
                 return a->service_time < b->service_time;
             });
-        Process* p = *best_it;
-        Q3_Economy.erase(best_it);
+        Process* p = *best; q.erase(best);
         return p;
+    }
+};
+
+// =====================================================================
+//  Baseline A: 단순 FCFS (도착 순서)
+// =====================================================================
+class BaselineA_FCFS : public ISchedulerStrategy {
+public:
+    string getStrategyName() override { return "Baseline A (Strict FCFS)"; }
+
+    bool usePromotion() override { return false; }
+
+    void assignCounters(Counter counters[], int current_time,
+                        queue<Process*>& q1, vector<Process*>& q2, vector<Process*>& q3) override {
+        for (int i = 0; i < 5; ++i) {
+            if (!counters[i].is_busy) {
+                Process* selected = nullptr;
+                vector<Process*>* selected_q = nullptr;
+
+                if (!q1.empty()) {
+                    selected = q1.front();
+                    selected_q = nullptr; // queue는 pop 사용
+                }
+                if (!q2.empty() && (selected == nullptr || q2.front()->arrival_time < selected->arrival_time)) {
+                    selected = q2.front();
+                    selected_q = &q2;
+                }
+                if (!q3.empty() && (selected == nullptr || q3.front()->arrival_time < selected->arrival_time)) {
+                    selected = q3.front();
+                    selected_q = &q3;
+                }
+
+                if (selected != nullptr) {
+                    counters[i].is_busy = true;
+                    counters[i].current_process = selected;
+                    counters[i].remaining_time = selected->service_time;
+                    selected->start_time = current_time;
+
+                    if (selected_q == &q2) q2.erase(q2.begin());
+                    else if (selected_q == &q3) q3.erase(q3.begin());
+                    else q1.pop();
+                }
+            }
+        }
+    }
+};
+
+// =====================================================================
+//  Baseline B: 등급별 고정 우선순위 (First > Business > Economy)
+// =====================================================================
+class BaselineB_Priority : public ISchedulerStrategy {
+public:
+    string getStrategyName() override { return "Baseline B (Strict Priority FCFS)"; }
+
+    bool usePromotion() override { return false; }
+
+    void assignCounters(Counter counters[], int current_time,
+                        queue<Process*>& q1, vector<Process*>& q2, vector<Process*>& q3) override {
+        for (int i = 0; i < 5; ++i) {
+            if (!counters[i].is_busy) {
+                Process* selected = nullptr;
+
+                if (!q1.empty()) {
+                    selected = q1.front(); q1.pop();
+                } else if (!q2.empty()) {
+                    selected = q2.front(); q2.erase(q2.begin());
+                } else if (!q3.empty()) {
+                    selected = q3.front(); q3.erase(q3.begin());
+                }
+
+                if (selected != nullptr) {
+                    counters[i].is_busy = true;
+                    counters[i].current_process = selected;
+                    counters[i].remaining_time = selected->service_time;
+                    selected->start_time = current_time;
+                }
+            }
+        }
+    }
+};
+
+// =====================================================================
+// Baseline C: Non-preemptive SJF (등급 무관, 짧은 작업 우선)
+// =====================================================================
+class BaselineC_SJF : public ISchedulerStrategy {
+public:
+    string getStrategyName() override { return "Baseline C (Non-preemptive SJF)"; }
+
+    bool usePromotion() override { return false; }
+
+    void assignCounters(Counter counters[], int current_time,
+                        queue<Process*>& q1, vector<Process*>& q2, vector<Process*>& q3) override {
+        for (int i = 0; i < 5; ++i) {
+            if (!counters[i].is_busy) {
+                vector<Process*> waiting;
+                queue<Process*> q1_copy = q1;
+                while (!q1_copy.empty()) {
+                    waiting.push_back(q1_copy.front());
+                    q1_copy.pop();
+                }
+                waiting.insert(waiting.end(), q2.begin(), q2.end());
+                waiting.insert(waiting.end(), q3.begin(), q3.end());
+
+                if (waiting.empty()) continue;
+
+                auto best = min_element(waiting.begin(), waiting.end(),
+                    [](Process* a, Process* b) {
+                        if (a->service_time == b->service_time) return a->arrival_time < b->arrival_time;
+                        return a->service_time < b->service_time;
+                    });
+                Process* selected = *best;
+
+                auto removeFromQ1 = [&](queue<Process*>& q) {
+                    queue<Process*> rebuilt;
+                    while (!q.empty()) {
+                        Process* current = q.front();
+                        q.pop();
+                        if (current != selected) rebuilt.push(current);
+                    }
+                    q = rebuilt;
+                };
+
+                bool in_q1 = false;
+                queue<Process*> q1_scan = q1;
+                while (!q1_scan.empty()) {
+                    if (q1_scan.front() == selected) {
+                        in_q1 = true;
+                        break;
+                    }
+                    q1_scan.pop();
+                }
+
+                if (in_q1) {
+                    removeFromQ1(q1);
+                } else {
+                    auto it2 = find(q2.begin(), q2.end(), selected);
+                    if (it2 != q2.end()) q2.erase(it2);
+                    else {
+                        auto it3 = find(q3.begin(), q3.end(), selected);
+                        if (it3 != q3.end()) q3.erase(it3);
+                    }
+                }
+
+                counters[i].is_busy = true;
+                counters[i].current_process = selected;
+                counters[i].remaining_time = selected->service_time;
+                selected->start_time = current_time;
+            }
+        }
+    }
+};
+
+// =====================================================================
+// 6. 스케줄러 핵심 엔진 (Context)
+// =====================================================================
+class Scheduler {
+private:
+    int current_time = 0;
+    queue<Process*> Q1_First; 
+    vector<Process*> Q2_Business; 
+    vector<Process*> Q3_Economy;  
+    Counter counters[5]; 
+    vector<Process*> all_processes;
+    int completed_processes = 0;
+    
+    // Strategy Pattern 적용
+    ISchedulerStrategy* strategy;
+
+public:
+    Scheduler(vector<Process>& processes, ISchedulerStrategy* strat) : strategy(strat) {
+        for (int i = 0; i < 5; ++i) counters[i].id = i + 1;
+        for (auto& p : processes) all_processes.push_back(&p);
+    }
+
+    void run() {
+        cout << "\n=== 시뮬레이션 시작 (" << strategy->getStrategyName() << ") ===\n";
+        int max_iterations = 3000; 
+        int iterations = 0;
+        
+        while (completed_processes < (int)all_processes.size() && iterations < max_iterations) {
+            enqueueArrivedProcesses();
+            // Promotion은 전략이 허용할 때만 실행
+            if (strategy->usePromotion()) checkPromotion();
+
+            // 외부 모듈(Strategy)에 배정 로직 위임
+            strategy->assignCounters(counters, current_time, Q1_First, Q2_Business, Q3_Economy);
+            
+            processCounters();
+            current_time++;
+            iterations++;
+        }
+        cout << "=== 시뮬레이션 종료 (최종 Time: " << current_time << ") ===\n";
+    }
+
+private:
+    void enqueueArrivedProcesses() {
+        for (Process* p : all_processes) {
+            if (p->arrival_time == current_time && !p->is_enqueued) {
+                p->is_enqueued = true;
+                if (p->grade == FIRST) Q1_First.push(p);
+                else if (p->grade == BUSINESS) Q2_Business.push_back(p);
+                else if (p->grade == ECONOMY) Q3_Economy.push_back(p);
+            }
+        }
+    }
+
+    void checkPromotion() {
+        for (auto it = Q3_Economy.begin(); it != Q3_Economy.end(); ) {
+            int waiting_time = current_time - (*it)->arrival_time;
+            // 20초과
+            if (waiting_time > 20 && !(*it)->is_promoted) {
+                (*it)->is_promoted = true;
+                Q2_Business.push_back(*it);
+                it = Q3_Economy.erase(it); 
+            } else {
+                ++it;
+            }
+        }
     }
 
     void processCounters() {
         for (int i = 0; i < 5; ++i) {
             if (counters[i].is_busy) {
                 counters[i].remaining_time--;
-                
                 if (counters[i].remaining_time == 0) {
                     int completed_at = current_time + 1;
                     counters[i].current_process->completion_time = completed_at;
@@ -310,25 +409,89 @@ private:
     }
 };
 
-// 테스트용 메인 함수
+// =====================================================================
+// 7. 등급별 통계 출력 강화
+// =====================================================================
+void printResults(const vector<Process>& processes, const string& title = "") {
+    cout << "\n=== 시뮬레이션 결과 ===\n";
+    if (!title.empty()) {
+        cout << "[ " << title << " ]\n";
+    }
+    
+    // 등급별 누적 통계 계산
+    int t_wait[4] = {0}, t_turn[4] = {0}, count[4] = {0};
+    int promoted_count = 0;
+    
+    for (const auto& p : processes) {
+        int g = p.grade;
+        t_wait[g] += p.waiting_time;
+        t_turn[g] += p.turnaround_time;
+        count[g]++;
+        
+        t_wait[0] += p.waiting_time; // 전체 합계 기록용
+        t_turn[0] += p.turnaround_time;
+        count[0]++;
+        
+        if (p.is_promoted) promoted_count++;
+    }
+    
+    // [추가] 개별 승객 결과 테이블 (요구: arrival, start, completion, turnaround 등)
+    cout << "\n[ 개별 프로세스 결과 ]\n";
+    cout << "ID\tArrival\tStart\tComplete\tService\tTurnaround\tPromoted\n";
+    cout << "-----------------------------------------------------------------\n";
+    for (const auto& p : processes) {
+        cout << p.id << "\t" 
+             << p.arrival_time << "\t" 
+             << p.start_time << "\t" 
+             << p.completion_time << "\t" 
+             << p.service_time << "\t" 
+             << p.turnaround_time << "\t" 
+             << (p.is_promoted ? "Yes" : "No") << "\n";
+    }
+    
+    cout << "\n[ 등급별 평균 반환 시간 (ATT) 및 대기 시간 ]\n";
+    cout << fixed << setprecision(2);
+    if(count[1] > 0) cout << " - First Class : ATT = " << (double)t_turn[1]/count[1] << " / Wait = " << (double)t_wait[1]/count[1] << " (" << count[1] << "명)\n";
+    if(count[2] > 0) cout << " - Business    : ATT = " << (double)t_turn[2]/count[2] << " / Wait = " << (double)t_wait[2]/count[2] << " (" << count[2] << "명)\n";
+    if(count[3] > 0) cout << " - Economy     : ATT = " << (double)t_turn[3]/count[3] << " / Wait = " << (double)t_wait[3]/count[3] << " (" << count[3] << "명)\n";
+    
+    cout << "\n[ 전체 시스템 통계 ]\n";
+    cout << " - 전체 평균 ATT : " << (double)t_turn[0]/count[0] << "\n";
+    cout << " - 전체 평균 대기시간: " << (double)t_wait[0]/count[0] << "\n";
+    cout << " - 승격된 프로세스 수: " << promoted_count << "명\n";
+}
+
+// 8. 메인 함수
 int main() {
     vector<Process> processes = parseInputFile("input.txt");
+    if (processes.empty()) return 1;
 
-    if (processes.empty()) {
-        cerr << "입력 데이터가 비어 있거나 파싱에 실패했습니다." << endl;
-        return 1;
-    }
+    // --- [실행 1] Baseline A ---
+    BaselineA_FCFS baselineA;
+    Scheduler schedulerA(processes, &baselineA);
+    schedulerA.run();
+    printResults(processes, baselineA.getStrategyName());
+    resetProcesses(processes);
 
-    cout << "입력 파싱 완료: " << processes.size() << "개 프로세스 로드" << endl;
-    cout << "\n--- 로드된 프로세스 ---\n";
-    printProcesses(processes);
-    
-    // 스케줄러 실행
-    Scheduler scheduler(processes);
-    scheduler.run();
-    
-    // 결과 출력
-    printResults(processes);
+    // --- [실행 2] Baseline B ---
+    BaselineB_Priority baselineB;
+    Scheduler schedulerB(processes, &baselineB);
+    schedulerB.run();
+    printResults(processes, baselineB.getStrategyName());
+    resetProcesses(processes);
+
+    // --- [실행 3] Baseline C ---
+    BaselineC_SJF baselineC;
+    Scheduler schedulerC(processes, &baselineC);
+    schedulerC.run();
+    printResults(processes, baselineC.getStrategyName());
+    resetProcesses(processes);
+
+    // --- [실행 4] Proposed ---
+    ProposedStrategy proposed;
+    Scheduler schedulerProp(processes, &proposed);
+    schedulerProp.run();
+    printResults(processes, proposed.getStrategyName());
     
     return 0;
 }
