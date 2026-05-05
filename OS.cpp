@@ -435,7 +435,7 @@ void printResults(const vector<Process>& processes, const string& title = "") {
         if (p.is_promoted) promoted_count++;
     }
     
-    // [추가] 개별 승객 결과 테이블 (요구: arrival, start, completion, turnaround 등)
+    // 개별 승객 결과 테이블 (요구: arrival, start, completion, turnaround 등)
     cout << "\n[ 개별 프로세스 결과 ]\n";
     cout << "ID\tArrival\tStart\tComplete\tService\tTurnaround\tPromoted\n";
     cout << "-----------------------------------------------------------------\n";
