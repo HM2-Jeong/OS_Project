@@ -224,37 +224,33 @@ private:
         }
     }
 
-    void assignCounters() {
-        // 빈 카운터 찾아서 프로세스 배정 (우선도: Q1 > Q2 > Q3)
+  void assignCounters() {
         for (int i = 0; i < 5; ++i) {
             if (!counters[i].is_busy) {
                 Process* selected = nullptr;
-                
-                // Q1 (First Class) - FCFS 우선
-                if (!Q1_First.empty()) {
-                    selected = Q1_First.front();
-                    Q1_First.pop();
+                int cid = counters[i].id; // 1~5번 카운터
+
+                // 설계서 1.3(c) 로직 정확히 구현 (코파일럿이 망친 부분 복구)
+                if (cid == 1) { 
+                    selected = takeFromQ1(); // C1은 First 전용 (비었으면 Idle)
+                } 
+                else if (cid == 2) { 
+                    selected = takeFromQ2_HRRN();
+                    if (selected == nullptr) selected = takeFromQ3_SPN(); // C2는 Economy 지원 허용
+                } 
+                else if (cid == 3) { 
+                    selected = takeFromQ3_SPN(); // C3는 Economy 전용 (비었으면 Idle)
+                } 
+                else if (cid == 4) { 
+                    selected = takeFromQ3_SPN();
+                    if (selected == nullptr) selected = takeFromQ2_HRRN(); // C4는 E -> B
+                } 
+                else if (cid == 5) { 
+                    selected = takeFromQ2_HRRN();
+                    if (selected == nullptr) selected = takeFromQ3_SPN(); // C5는 B -> E
                 }
-                // Q2 (Business) - HRRN으로 선택
-                else if (!Q2_Business.empty()) {
-                    sort(Q2_Business.begin(), Q2_Business.end(), 
-                         [this](Process* a, Process* b) {
-                             return a->getResponseRatio(current_time) > b->getResponseRatio(current_time);
-                         });
-                    selected = Q2_Business.front();
-                    Q2_Business.erase(Q2_Business.begin());
-                }
-                // Q3 (Economy) - HRRN으로 선택
-                else if (!Q3_Economy.empty()) {
-                    sort(Q3_Economy.begin(), Q3_Economy.end(), 
-                         [this](Process* a, Process* b) {
-                             return a->getResponseRatio(current_time) > b->getResponseRatio(current_time);
-                         });
-                    selected = Q3_Economy.front();
-                    Q3_Economy.erase(Q3_Economy.begin());
-                }
-                
-                // 선택된 프로세스가 있으면 카운터에 배정
+
+                // 선택된 프로세스가 있으면 카운터에 배정하고 서비스 시작
                 if (selected != nullptr) {
                     counters[i].is_busy = true;
                     counters[i].current_process = selected;
@@ -265,15 +261,45 @@ private:
         }
     }
 
+    Process* takeFromQ1() {
+        if (Q1_First.empty()) return nullptr;
+        Process* p = Q1_First.front();
+        Q1_First.pop();
+        return p;
+    }
+
+    Process* takeFromQ2_HRRN() {
+        if (Q2_Business.empty()) return nullptr;
+        auto best_it = max_element(Q2_Business.begin(), Q2_Business.end(),
+            [this](Process* a, Process* b) {
+                return a->getResponseRatio(current_time) < b->getResponseRatio(current_time);
+            });
+        Process* p = *best_it;
+        Q2_Business.erase(best_it);
+        return p;
+    }
+
+    Process* takeFromQ3_SPN() {
+        if (Q3_Economy.empty()) return nullptr;
+        auto best_it = min_element(Q3_Economy.begin(), Q3_Economy.end(),
+            [](Process* a, Process* b) {
+                if (a->service_time == b->service_time) return a->arrival_time < b->arrival_time;
+                return a->service_time < b->service_time;
+            });
+        Process* p = *best_it;
+        Q3_Economy.erase(best_it);
+        return p;
+    }
+
     void processCounters() {
         for (int i = 0; i < 5; ++i) {
             if (counters[i].is_busy) {
                 counters[i].remaining_time--;
                 
-                // 서비스가 완료된 경우
                 if (counters[i].remaining_time == 0) {
-                    counters[i].current_process->completion_time = current_time;
-                    counters[i].current_process->turnaround_time = current_time - counters[i].current_process->arrival_time;
+                    int completed_at = current_time + 1;
+                    counters[i].current_process->completion_time = completed_at;
+                    counters[i].current_process->turnaround_time = completed_at - counters[i].current_process->arrival_time;
                     counters[i].current_process->waiting_time = counters[i].current_process->turnaround_time - counters[i].current_process->service_time;
                     
                     counters[i].clear();
