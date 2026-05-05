@@ -30,6 +30,7 @@ struct Process {
     
     bool is_promoted = false;
     bool is_enqueued = false;
+    int assigned_counter = 0;  // 할당된 카운터 ID (1~5)
     
     // HRRN 계산
     double getResponseRatio(int current_time) const {
@@ -69,6 +70,7 @@ void resetProcesses(vector<Process>& processes) {
         p.turnaround_time = 0;
         p.is_promoted = false;
         p.is_enqueued = false;
+        p.assigned_counter = 0;
     }
 }
 
@@ -140,6 +142,7 @@ public:
                     counters[i].current_process = selected;
                     counters[i].remaining_time = selected->service_time;
                     selected->start_time = current_time;
+                    selected->assigned_counter = cid;
                 }
             }
         }
@@ -208,6 +211,7 @@ public:
                     counters[i].current_process = selected;
                     counters[i].remaining_time = selected->service_time;
                     selected->start_time = current_time;
+                    selected->assigned_counter = i + 1;
 
                     if (selected_q == &q2) q2.erase(q2.begin());
                     else if (selected_q == &q3) q3.erase(q3.begin());
@@ -246,6 +250,7 @@ public:
                     counters[i].current_process = selected;
                     counters[i].remaining_time = selected->service_time;
                     selected->start_time = current_time;
+                    selected->assigned_counter = i + 1;
                 }
             }
         }
@@ -318,6 +323,7 @@ public:
                 counters[i].current_process = selected;
                 counters[i].remaining_time = selected->service_time;
                 selected->start_time = current_time;
+                selected->assigned_counter = i + 1;
             }
         }
     }
@@ -437,7 +443,7 @@ void printResults(const vector<Process>& processes, const string& title = "") {
     
     // 개별 승객 결과 테이블 (요구: arrival, start, completion, turnaround 등)
     cout << "\n[ 개별 프로세스 결과 ]\n";
-    cout << "ID\tArrival\tStart\tComplete\tService\tTurnaround\tPromoted\n";
+    cout << "ID\tArrival\tStart\tComplete\tService\tTurnaround\tCounter\tPromoted\n";
     cout << "-----------------------------------------------------------------\n";
     for (const auto& p : processes) {
         cout << p.id << "\t" 
@@ -446,6 +452,7 @@ void printResults(const vector<Process>& processes, const string& title = "") {
              << p.completion_time << "\t" 
              << p.service_time << "\t" 
              << p.turnaround_time << "\t" 
+             << "C" << p.assigned_counter << "\t"
              << (p.is_promoted ? "Yes" : "No") << "\n";
     }
     
@@ -459,6 +466,63 @@ void printResults(const vector<Process>& processes, const string& title = "") {
     cout << " - 전체 평균 ATT : " << (double)t_turn[0]/count[0] << "\n";
     cout << " - 전체 평균 대기시간: " << (double)t_wait[0]/count[0] << "\n";
     cout << " - 승격된 프로세스 수: " << promoted_count << "명\n";
+    
+    // ===== 카운터별 통계 =====
+    cout << "\n[ 카운터별 활용도 ]\n";
+    cout << "카운터\t유형\t처리 승객 수\t총 처리 시간\t유휴 시간\n";
+    cout << "-------------------------------------------------------\n";
+    
+    // 1. 전체 시뮬레이션 종료 시간 구하기
+    int global_max_completion = 0;
+    for (const auto& p : processes) {
+        if (p.completion_time > global_max_completion) {
+            global_max_completion = p.completion_time;
+        }
+    }
+    
+    int counter_total_time = 0;
+    int total_idle_time = 0;
+    
+    for (int c = 1; c <= 5; ++c) {
+        int service_time_sum = 0;
+        int process_count = 0;
+        
+        for (const auto& p : processes) {
+            if (p.assigned_counter == c) {
+                service_time_sum += p.service_time;
+                process_count++;
+            }
+        }
+        
+        if (process_count == 0) {
+            cout << "C" << c << "\t" << "?" << "\t" 
+                 << 0 << "\t\t" 
+                 << 0 << "\t\t" 
+                 << 0 << "\n";
+            continue;
+        }
+        
+        // 2. 유휴 시간 = 전체 종료 시간 - 해당 카운터의 실제 처리 시간
+        int idle_time = global_max_completion - service_time_sum;
+        
+        counter_total_time += service_time_sum;
+        total_idle_time += idle_time;
+        
+        string counter_type = "";
+        if (c == 1) counter_type = "First 전용";
+        else if (c == 2) counter_type = "Business 전용";
+        else if (c == 3) counter_type = "Economy 전용";
+        else if (c == 4) counter_type = "Flex (E→B)";
+        else if (c == 5) counter_type = "Flex (B→E)";
+        
+        cout << "C" << c << "\t" << counter_type << "\t" 
+             << process_count << "\t\t" 
+             << service_time_sum << "\t\t" 
+             << idle_time << "\n";
+    }
+    
+    cout << "합계\t-\t50\t\t" << counter_total_time << "\t\t" 
+         << total_idle_time << "\n";
 }
 
 // 8. 메인 함수
